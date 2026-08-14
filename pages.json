@@ -1,0 +1,20 @@
+{
+  "pages": [
+    {
+      "path": "pages/index/index",
+      "style": {
+        "navigationBarTitleText": "游戏王战绩",
+        "navigationBarBackgroundColor": "#F6F6F6",
+        "navigationBarTextStyle": "black",
+        "backgroundColor": "#F6F6F6",
+        "disableScroll": false
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "游戏王战绩",
+    "navigationBarBackgroundColor": "#F6F6F6",
+    "backgroundColor": "#F6F6F6"
+  }
+}
