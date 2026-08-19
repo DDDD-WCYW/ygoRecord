@@ -530,6 +530,12 @@
               精简版用于记录 MD / OCG 对局的基本战绩与胜负统计。数据仅保存在本机，不上传云端。
             </view>
           </view>
+          <view class="section-panel">
+            <view class="section-panel__title">版权与联系</view>
+            <view class="section-panel__desc">版权所有 © 2026 华姬。保留所有权利。</view>
+            <view class="section-panel__desc">作者：华姬</view>
+            <view class="section-panel__desc">联系邮箱：hhwanxr@gmail.com</view>
+          </view>
         </template>
 
       </scroll-view>
@@ -1027,7 +1033,7 @@
 
       <view v-if="opponentDeckCategoryAvailableDeckNames.length" class="section-panel">
         <view class="section-panel__title">
-          选择卡组（{{opponentDeckCategoryEditingDeckNames.length}}/{{opponentDeckCategoryDeckLimit}}）
+          已选择 {{opponentDeckCategoryEditingDeckNames.length}} 个卡组
         </view>
         <view class="stats-mode-switcher">
           <view v-for="(item, index) in opponentDeckCategoryAvailableDeckNames" :key="item.name" :class="'stats-mode-switcher__item ' + (item.isActive ? 'is-active' : '') + ' ' + (item.isDisabled ? 'is-disabled' : '')" :data-name="item.name" @tap="onToggleOpponentDeckCategoryDeckName">
@@ -1215,6 +1221,7 @@ const LOCAL_CACHE_ENTRY_LIMITS = {
 };
 const DECK_NAME_MAX_LENGTH = 15;
 const OPPONENT_DECK_MAX_LENGTH = 15;
+const DECK_COUNT_CACHE_VERSION = 3;
 const RECORD_DECK_COLLAPSED_ROW_LIMIT = 3;
 const DEFAULT_BOTTOM_TABS_RESERVE_PX = 96;
 const MEASURED_BOTTOM_TABS_EXTRA_GAP_PX = 2;
@@ -1862,7 +1869,10 @@ function getRecordResultMeta(matchResult) {
 }
 
 function getCurrentStreakLabel(records = []) {
-  const sorted = sortRecordListDesc(records);
+  // 拔线视为无效对局，不计入也不中断连胜/连败。
+  const sorted = sortRecordListDesc(records).filter(
+    (item) => Number(item.matchResult) !== 3
+  );
   if (!sorted.length || ![0, 1].includes(Number(sorted[0].matchResult))) return "";
   const firstResult = Number(sorted[0].matchResult);
   let count = 0;
@@ -3396,7 +3406,6 @@ const pageConfig = {
     opponentDeckCategoryEditingDeckNames: [],
     opponentDeckCategoryAvailableDeckNames: [],
     opponentDeckCategoryNameMaxLength: 12,
-    opponentDeckCategoryDeckLimit: 20,
     failureReasonCategoryDialogVisible: false,
     failureReasonCategoryEditingId: "",
     failureReasonCategoryEditingName: "",
@@ -3949,9 +3958,14 @@ const pageConfig = {
   },
 
   getCurrentDeckMonthFilter() {
+    const matchTypeFilter = {
+      matchTypeId: this.getSelectedMatchTypeFilter(),
+      matchTypeIds: this.data.selectedMatchTypeFilterIds || [],
+    };
     if (this.data.currentTab === "stats" && this.data.opponentDeckStatsEnabled) {
       const selectedRange = this.getSelectedStatsMonthRange();
       return {
+        ...matchTypeFilter,
         matchMonthStart: selectedRange.startValue,
         matchMonthEnd: selectedRange.endValue,
         mdAccountId: LITE_EDITION ? "all" : this.getSelectedMdAccountFilter(),
@@ -3959,6 +3973,7 @@ const pageConfig = {
     }
 
     return {
+      ...matchTypeFilter,
       matchMonth: this.getSelectedMonthFilter(),
       mdAccountId: LITE_EDITION ? "all" : this.getSelectedMdAccountFilter(),
     };
@@ -5136,6 +5151,7 @@ const pageConfig = {
   },
 
   filterRecordsForView(records, options = {}) {
+    const selectedMatchFormat = options.matchFormat || "all";
     const selectedMonth = options.matchMonth || "all";
     const matchMonthStart = options.matchMonthStart || "";
     const matchMonthEnd = options.matchMonthEnd || "";
@@ -5146,6 +5162,12 @@ const pageConfig = {
     const todayOnly = options.todayOnly || false;
     const todayStart = todayOnly ? new Date(new Date().setHours(0, 0, 0, 0)) : null;
     return (records || []).filter((item) => {
+      if (selectedMatchFormat && selectedMatchFormat !== "all") {
+        const recordMatchFormat = String(item && item.matchFormat || "md").trim().toLowerCase();
+        if (recordMatchFormat !== String(selectedMatchFormat).trim().toLowerCase()) {
+          return false;
+        }
+      }
       const recordMonth = String(item.matchMonth || "");
       if (
         selectedMonth &&
@@ -5309,18 +5331,25 @@ const pageConfig = {
       resource: "decks",
       params: {
         matchFormat,
+        countVersion: DECK_COUNT_CACHE_VERSION,
         ...deckMonthFilter,
       },
       force: Boolean(options.force),
       request: async () => {
         return this.buildDecksFromBaseRecords(
           baseDecks,
-          this.filterRecordsForView(allRecords, deckMonthFilter)
+          this.filterRecordsForView(allRecords, {
+            ...deckMonthFilter,
+            matchFormat,
+          })
         );
       },
     });
 
-    const sidebarRecords = this.filterRecordsForView(allRecords, deckMonthFilter);
+    const sidebarRecords = this.filterRecordsForView(allRecords, {
+      ...deckMonthFilter,
+      matchFormat,
+    });
     const sidebarDecks = buildSidebarDecks(decks, sidebarRecords);
     let selectedDeckId = keepSelection ? this.data.selectedDeckId : "all";
 
@@ -6789,7 +6818,7 @@ const pageConfig = {
         errorMessage: "",
       });
 
-      this.loadCurrentTabData().catch((error) => {
+      Promise.all([this.loadDecks(true), this.loadCurrentTabData()]).catch((error) => {
         this.setData({
           errorMessage: this.getErrorMessage(error),
           contentLoading: false,
@@ -8721,7 +8750,7 @@ const pageConfig = {
     });
     if (this.data.currentTab === "stats" || this.data.currentTab === "records") {
       this.setData({ contentLoading: true, errorMessage: "" });
-      this.loadCurrentTabData().catch((error) => {
+      Promise.all([this.loadDecks(true), this.loadCurrentTabData()]).catch((error) => {
         this.setData({ errorMessage: this.getErrorMessage(error), contentLoading: false });
       });
     }
@@ -10352,13 +10381,6 @@ const pageConfig = {
     if (idx >= 0) {
       current.splice(idx, 1);
     } else {
-      if (current.length >= this.data.opponentDeckCategoryDeckLimit) {
-        wx.showToast({
-          title: `最多关联 ${this.data.opponentDeckCategoryDeckLimit} 个卡组`,
-          icon: "none",
-        });
-        return;
-      }
       current.push(name);
     }
 
